@@ -1,0 +1,3 @@
+config FINGERPRINT_FPC
+	default n
+       bool "FPC_BTP fingerprint sensor support"

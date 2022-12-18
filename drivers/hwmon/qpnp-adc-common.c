@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -401,6 +401,60 @@ static const struct qpnp_vadc_map_pt adcmap_qrd_skut1_btm_threshold[] = {
 	{900,	499},
 	{950,	487},
 	{1000,	477},
+};
+
+static const struct qpnp_vadc_map_pt adcmap_qrd_skue_btm_threshold[] = {
+	{-200,	1385},
+	{-180,	1353},
+	{-160,	1320},
+	{-140,	1287},
+	{-120,	1253},
+	{-100,	1218},
+	{-80,	1184},
+	{-60,	1149},
+	{-40,	1115},
+	{-20,	1080},
+	{0,	1046},
+	{20,	1013},
+	{40,	980},
+	{60,	948},
+	{80,	917},
+	{100,	887},
+	{120,	858},
+	{140,	830},
+	{160,	803},
+	{180,	777},
+	{200,	752},
+	{220,	729},
+	{240,	706},
+	{260,	685},
+	{280,	664},
+	{300,	645},
+	{320,	626},
+	{340,	609},
+	{360,	593},
+	{380,	577},
+	{400,	563},
+	{420,	549},
+	{440,	536},
+	{460,	524},
+	{480,	512},
+	{500,	501},
+	{520,	491},
+	{540,	481},
+	{560,	472},
+	{580,	464},
+	{600,	456},
+	{620,	448},
+	{640,	441},
+	{660,	435},
+	{680,	428},
+	{700,	423},
+	{720,	417},
+	{740,	412},
+	{760,	407},
+	{780,	402},
+	{800,	398},
 };
 
 /* Voltage to temperature */
@@ -808,6 +862,79 @@ static const struct qpnp_vadc_map_pt adcmap_batt_therm_qrd_215[] = {
 
 /* Voltage to temperature */
 static const struct qpnp_vadc_map_pt adcmap_batt_therm_pu30[] = {
+//+Bug 439935,xushengjuan.wt,modify,20201112,S86117AA1 charger bring up
+#ifdef CONFIG_ARCH_MSM8953
+	{1673-141,	-400},
+	{1649-139,	-380},
+	{1623-137,	-360},
+	{1596-135,	-340},
+	{1566-133,	-320},
+	{1535-131,	-300},
+	{1502-128,	-280},
+	{1467-125,	-260},
+	{1430-121,	-240},
+	{1392-117,	-220},
+	{1352-109,	-200},
+	{1311-96,	-180},
+	{1269-96,	-160},
+	{1226-92,	-140},
+	{1182-87,	-120},
+	{1138-83,	-100},
+	{1093-75,	-80},
+	{1049-65,	-60},
+	{1004-58,	-40},
+	{960-51,	-20},
+	{917-45,	0},
+	{874-44,	20},
+	{832-45,	40},
+	{791-46,	60},
+	{752-48,	80},
+	{713-33,	100},
+	{676-25,	120},
+	{640-12,	140},
+	{606+1,	160},
+	{573+14,	180},
+	{541+27,	200},
+	{511+24,	220},
+	{483+20,	240},
+	{455+18,	260},
+	{430+14,	280},
+	{405+26,	300},
+	{382+31,	320},
+	{360+38,	340},
+	{340+43,	360},
+	{320+50,	380},
+	{302+38,	(400+10)},
+	{285+40,	(420+20)},
+	{269+41,	(440+20)},
+	{253+42,	(460+20)},
+	{239+46,	(480+10)},
+	{225+49,	(500+10)},
+	{213+52,	520},
+	{201+56,	540},
+	{190+59,	560},
+	{179+63,	580},
+	{169+65,	600},
+	{160+46,	620},
+	{152+41,	640},
+	{143+36,	660},
+	{136+31,	680},
+	{128+24,	700},
+	{122+22,	720},
+	{115+17,	740},
+	{109+12,	760},
+	{104+7,	780},
+	{98+2,	800},
+	{93-3,	820},
+	{89-3,	840},
+	{84-3,	860},
+	{80-3,	880},
+	{76-3,	900},
+	{73-3,	920},
+	{69-3,	940},
+	{66-3,	960},
+	{63-3,	980}
+#else
 	{1842,	-400},
 	{1838,	-380},
 	{1833,	-360},
@@ -878,6 +1005,8 @@ static const struct qpnp_vadc_map_pt adcmap_batt_therm_pu30[] = {
 	{387,	940},
 	{372,	960},
 	{357,	980}
+#endif
+//-Bug 439935,xushengjuan.wt,modify,20201112,S86117AA1 charger bring up
 };
 
 /* Voltage to temp0erature */
@@ -1591,6 +1720,25 @@ int32_t qpnp_adc_scale_qrd_skut1_batt_therm(struct qpnp_vadc_chip *chip,
 			&adc_chan_result->physical);
 }
 EXPORT_SYMBOL(qpnp_adc_scale_qrd_skut1_batt_therm);
+
+int32_t qpnp_adc_scale_qrd_skue_batt_therm(struct qpnp_vadc_chip *chip,
+			int32_t adc_code,
+			const struct qpnp_adc_properties *adc_properties,
+			const struct qpnp_vadc_chan_properties *chan_properties,
+			struct qpnp_vadc_result *adc_chan_result)
+{
+	int64_t bat_voltage = 0;
+
+	qpnp_adc_scale_with_calib_param(adc_code,
+			adc_properties, chan_properties, &bat_voltage);
+
+	return qpnp_adc_map_temp_voltage(
+			adcmap_qrd_skue_btm_threshold,
+			ARRAY_SIZE(adcmap_qrd_skue_btm_threshold),
+			bat_voltage,
+			&adc_chan_result->physical);
+}
+EXPORT_SYMBOL(qpnp_adc_scale_qrd_skue_batt_therm);
 
 int32_t qpnp_adc_scale_smb_batt_therm(struct qpnp_vadc_chip *chip,
 		int32_t adc_code,

@@ -294,8 +294,17 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	/* This maps android backlight level 0 to 255 into
 	 * driver backlight level 0 to bl_max with rounding
 	 */
-	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+
+	//+bug 600732, wangcong.wt, add, 2020/11/11, Add Lcd backlight map
+	if (mfd->panel_info->blmap){
+			bl_lvl = mfd->panel_info->blmap[value];
+	}
+	else{
+		MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
 				mfd->panel_info->brightness_max);
+	}
+	pr_debug("%s: value %d  bl_lvl %lld\n", __func__, value, bl_lvl);
+	//-bug 600732, wangcong.wt, add, 2020/11/11, Add Lcd backlight map
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
@@ -1295,6 +1304,7 @@ static int mdss_fb_probe(struct platform_device *pdev)
 
 	if (mfd->panel.type == SPI_PANEL)
 		mfd->fb_imgType = MDP_RGB_565;
+
 	if (mfd->panel.type == MIPI_VIDEO_PANEL || mfd->panel.type ==
 		MIPI_CMD_PANEL || mfd->panel.type == SPI_PANEL){
 		rc = of_property_read_string(pdev->dev.of_node,
@@ -1308,6 +1318,7 @@ static int mdss_fb_probe(struct platform_device *pdev)
 				mfd->fb_imgType = MDP_RGBA_8888;
 			}
 		}
+
 	mfd->split_fb_left = mfd->split_fb_right = 0;
 
 	mdss_fb_set_split_mode(mfd, pdata);
@@ -2031,6 +2042,11 @@ error:
 	return ret;
 }
 
+//+Bug 455539 gudi.wt, MODIFY, 20190724,s86119 control charging current in lcd on or off
+#ifdef CONFIG_ARCH_MSM8953
+extern bool usbchg_lcd_is_on;
+#endif
+//-Bug 455539 gudi.wt, MODIFY, 20190724,s86119 control charging current in lcd on or off
 static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			     int op_enable)
 {
@@ -2047,7 +2063,8 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 
 	pr_debug("%pS mode:%d\n", __builtin_return_address(0),
 		blank_mode);
-
+	//bug 600732, wangcong.wt, add, 2020/11/11, Add Lcd debug info
+	pr_info("LCD_LOG: %s  blank_mode %d +++ \n", __func__, blank_mode);
 	snprintf(trace_buffer, sizeof(trace_buffer), "fb%d blank %d",
 		mfd->index, blank_mode);
 	ATRACE_BEGIN(trace_buffer);
@@ -2085,6 +2102,11 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	case FB_BLANK_UNBLANK:
 		pr_debug("unblank called. cur pwr state=%d\n", cur_power_state);
 		ret = mdss_fb_blank_unblank(mfd);
+                //+Bug 455539 gudi.wt, MODIFY, 20190724, control charging current in lcd on or off
+                #ifdef CONFIG_ARCH_MSM8953
+                usbchg_lcd_is_on = 1;
+                #endif
+                //-Bug 455539 gudi.wt, MODIFY, 20190724, control charging current in lcd on or off
 		break;
 	case BLANK_FLAG_ULP:
 		req_power_state = MDSS_PANEL_POWER_LP2;
@@ -2119,6 +2141,11 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		req_power_state = MDSS_PANEL_POWER_OFF;
 		pr_debug("blank powerdown called\n");
 		ret = mdss_fb_blank_blank(mfd, req_power_state);
+                //+Bug 455539 gudi.wt, MODIFY, 20190724,s86119 control charging current in lcd on or off
+                #ifdef CONFIG_ARCH_MSM8953
+                usbchg_lcd_is_on = 0;
+                #endif
+                //-Bug 455539 gudi.wt, MODIFY, 20190724,s86119 control charging current in lcd on or off
 		break;
 	}
 
@@ -2126,7 +2153,8 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	sysfs_notify(&mfd->fbi->dev->kobj, NULL, "show_blank_event");
 
 	ATRACE_END(trace_buffer);
-
+	//bug 600732, wangcong.wt,add, 2020/11/11, Add Lcd debug info
+	pr_info("LCD_LOG: %s  blank_mode %d --- \n", __func__, blank_mode);
 	return ret;
 }
 
@@ -2215,8 +2243,9 @@ void mdss_fb_free_fb_ion_memory(struct msm_fb_data_type *mfd)
 
 	ion_unmap_kernel(mfd->fb_ion_client, mfd->fb_ion_handle);
 
-	if (mfd->mdp.fb_mem_get_iommu_domain && !(!mfd->fb_attachment ||
-		!mfd->fb_attachment->dmabuf ||
+	if ((mfd->mdp.fb_mem_get_iommu_domain ||
+		(mfd->panel.type == SPI_PANEL)) &&
+		!(!mfd->fb_attachment || !mfd->fb_attachment->dmabuf ||
 		!mfd->fb_attachment->dmabuf->ops)) {
 		dma_buf_unmap_attachment(mfd->fb_attachment, mfd->fb_table,
 				DMA_BIDIRECTIONAL);
@@ -2276,6 +2305,20 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd, size_t fb_size)
 
 		mfd->fb_table = dma_buf_map_attachment(mfd->fb_attachment,
 				DMA_BIDIRECTIONAL);
+		if (IS_ERR(mfd->fb_table)) {
+			rc = PTR_ERR(mfd->fb_table);
+			goto err_detach;
+		}
+	} else if (mfd->panel.type == SPI_PANEL) {
+		mfd->fb_attachment = dma_buf_attach(mfd->fbmem_buf,
+				&mfd->pdev->dev);
+		if (IS_ERR(mfd->fb_attachment)) {
+			rc = PTR_ERR(mfd->fb_attachment);
+			goto err_put;
+		}
+
+		mfd->fb_table = dma_buf_map_attachment(mfd->fb_attachment,
+			DMA_BIDIRECTIONAL);
 		if (IS_ERR(mfd->fb_table)) {
 			rc = PTR_ERR(mfd->fb_table);
 			goto err_detach;
@@ -2949,15 +2992,7 @@ static int mdss_fb_release_all(struct fb_info *info, bool release_all)
 			mdss_fb_free_fb_ion_memory(mfd);
 
 		atomic_set(&mfd->ioctl_ref_cnt, 0);
-	} else {
-		if (mfd->mdp.release_fnc)
-			ret = mfd->mdp.release_fnc(mfd, file);
-
-		/* display commit is needed to release resources */
-		if (ret)
-			mdss_fb_pan_display(&mfd->fbi->var, mfd->fbi);
 	}
-
 	return ret;
 }
 
@@ -3036,7 +3071,7 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 			wait_ms = jiffies_to_msecs(wait_jf);
 			if (wait_jf < 0)
 				break;
-
+			else
 				wait_ms = min_t(long, WAIT_FENCE_FINAL_TIMEOUT,
 						wait_ms);
 
@@ -4470,7 +4505,6 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 	}
 
 skip_retire_fence:
-	mdss_get_sync_fence_fd(rel_fence);
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
