@@ -1090,14 +1090,8 @@ mapped:
 	if (!bit)
 		return;
 
-<<<<<<< HEAD
-	if (device->driver->input_mapped &&
-	    device->driver->input_mapped(device, hidinput, field, usage,
-					 &bit, &max) < 0) {
-=======
 	if (device->driver->input_mapped && device->driver->input_mapped(device,
 				hidinput, field, usage, &bit, &max) < 0){
->>>>>>> aacd26bf0725 (drivers: Import OEM Changes)
 		/*
 		 * The driver indicated that no further generic handling
 		 * of the usage is desired.
