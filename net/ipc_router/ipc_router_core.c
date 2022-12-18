@@ -227,25 +227,6 @@ void msm_ipc_router_set_ws_allowed(bool flag)
 	is_wakeup_source_allowed = flag;
 }
 
-/**
- * is_sensor_port() - Check if the remote port is sensor service or not
- * @rport: Pointer to the remote port.
- *
- * Return: true if the remote port is sensor service else false.
- */
-static int is_sensor_port(struct msm_ipc_router_remote_port *rport)
-{
-	u32 svcid = 0;
-
-	if (rport && rport->server) {
-		svcid = rport->server->name.service;
-		if (svcid == 400 || (svcid >= 256 && svcid <= 320))
-			return true;
-	}
-
-	return false;
-}
-
 static void init_routing_table(void)
 {
 	int i;
@@ -979,13 +960,27 @@ static int calc_tx_header_size(struct rr_packet *pkt,
  *
  * @return: valid header size on success, INT_MAX on failure.
  */
-static int calc_rx_header_size(struct msm_ipc_router_xprt_info *xprt_info)
+static int calc_rx_header_size(struct msm_ipc_router_xprt_info *xprt_info,
+			       struct rr_packet *pkt)
 {
 	int xprt_version = 0;
 	int hdr_size = INT_MAX;
+	struct sk_buff *temp_skb;
 
-	if (xprt_info)
+	if (xprt_info && xprt_info->initialized) {
 		xprt_version = xprt_info->xprt->get_version(xprt_info->xprt);
+	} else {
+		if (!pkt) {
+			IPC_RTR_ERR("%s: NULL PKT\n", __func__);
+			return -EINVAL;
+		}
+		temp_skb = skb_peek(pkt->pkt_fragment_q);
+		if (!temp_skb || !temp_skb->data) {
+			IPC_RTR_ERR("%s: No SKBs in skb_queue\n", __func__);
+			return -EINVAL;
+		}
+		xprt_version = temp_skb->data[0];
+	}
 
 	if (xprt_version == IPC_ROUTER_V1)
 		hdr_size = sizeof(struct rr_header_v1);
@@ -2774,6 +2769,7 @@ static void do_read_data(struct kthread_work *work)
 	struct rr_packet *pkt = NULL;
 	struct msm_ipc_port *port_ptr;
 	struct msm_ipc_router_remote_port *rport_ptr;
+	int ret;
 
 	struct msm_ipc_router_xprt_info *xprt_info =
 		container_of(work,
@@ -2781,7 +2777,16 @@ static void do_read_data(struct kthread_work *work)
 			     read_data);
 
 	while ((pkt = rr_read(xprt_info)) != NULL) {
+		if (pkt->length < calc_rx_header_size(xprt_info,pkt) || 
+			pkt->length > MAX_IPC_PKT_SIZE) {
+			IPC_RTR_ERR("%s: Invalid pkt length %d\n",
+			 __func__, pkt->length);
+			goto read_next_pkt1;
+		}
 
+		ret = extract_header(pkt);
+		if (ret < 0)
+			goto read_next_pkt1;
 		hdr = &pkt->hdr;
 
 		if ((hdr->dst_node_id != IPC_ROUTER_NID_LOCAL) &&
@@ -3572,16 +3577,6 @@ int msm_ipc_router_close_port(struct msm_ipc_port *port_ptr)
 			ipc_router_destroy_rport(rport_ptr);
 		}
 
-		if (port_ptr->type == SERVER_PORT) {
-			memset(&msg, 0, sizeof(msg));
-			msg.cmd = IPC_ROUTER_CTRL_CMD_REMOVE_SERVER;
-			msg.srv.service = port_ptr->port_name.service;
-			msg.srv.instance = port_ptr->port_name.instance;
-			msg.srv.node_id = port_ptr->this_port.node_id;
-			msg.srv.port_id = port_ptr->this_port.port_id;
-			broadcast_ctl_msg(&msg);
-		}
-
 		/* Server port could have been a client port earlier.
 		 * Send REMOVE_CLIENT message in either case.
 		 */
@@ -3611,6 +3606,19 @@ int msm_ipc_router_close_port(struct msm_ipc_port *port_ptr)
 						  port_ptr->this_port.node_id,
 						  port_ptr->this_port.port_id);
 		}
+		/**
+		 * released server information from hash table, now
+		 * it is safe to broadcast remove server message so that
+		 * next call to lookup server will not succeed until
+		 * server open the port again
+		 */
+		memset(&msg, 0, sizeof(msg));
+		msg.cmd = IPC_ROUTER_CTRL_CMD_REMOVE_SERVER;
+		msg.srv.service = port_ptr->port_name.service;
+		msg.srv.instance = port_ptr->port_name.instance;
+		msg.srv.node_id = port_ptr->this_port.node_id;
+		msg.srv.port_id = port_ptr->this_port.port_id;
+		broadcast_ctl_msg(&msg);
 	}
 
 	mutex_lock(&port_ptr->port_lock_lhc3);
@@ -4169,6 +4177,7 @@ static int msm_ipc_router_add_xprt(struct msm_ipc_router_xprt *xprt)
 	up_write(&routing_table_lock_lha3);
 
 	xprt->priv = xprt_info;
+	complete_all(&xprt->xprt_init_complete);
 	send_hello_msg(xprt_info);
 
 	return 0;
@@ -4244,7 +4253,8 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 {
 	struct msm_ipc_router_xprt_info *xprt_info = xprt->priv;
 	struct msm_ipc_router_xprt_work *xprt_work;
-	struct msm_ipc_router_remote_port *rport_ptr = NULL;
+    //bug657894, linyaosen.wt, rm, 20210527, to delte constant dead code
+	//struct msm_ipc_router_remote_port *rport_ptr = NULL;
 	struct rr_packet *pkt;
 	int ret;
 
@@ -4261,7 +4271,9 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 		if (xprt_work) {
 			xprt_work->xprt = xprt;
 			INIT_WORK(&xprt_work->work, xprt_open_worker);
+			init_completion(&xprt->xprt_init_complete);
 			queue_work(msm_ipc_router_workqueue, &xprt_work->work);
+			wait_for_completion(&xprt->xprt_init_complete);
 		} else {
 			IPC_RTR_ERR(
 			"%s: malloc failure - Couldn't notify OPEN event",
@@ -4295,45 +4307,23 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 	if (!pkt)
 		return;
 
-	if (pkt->length < calc_rx_header_size(xprt_info) ||
-	    pkt->length > MAX_IPC_PKT_SIZE) {
-		IPC_RTR_ERR("%s: Invalid pkt length %d\n",
-			    __func__, pkt->length);
-		release_pkt(pkt);
-		return;
-	}
-
-	ret = extract_header(pkt);
-	if (ret < 0) {
-		release_pkt(pkt);
-		return;
-	}
-
 	pkt->ws_need = false;
-
-	if (pkt->hdr.type == IPC_ROUTER_CTRL_CMD_DATA)
-		rport_ptr = ipc_router_get_rport_ref(pkt->hdr.src_node_id,
-						     pkt->hdr.src_port_id);
-
 	mutex_lock(&xprt_info->rx_lock_lhb2);
 	list_add_tail(&pkt->list, &xprt_info->pkt_list);
-	/* check every pkt is from SENSOR services or not and
-	 * avoid holding both edge and port specific wake-up sources
-	 */
-	if (!is_sensor_port(rport_ptr)) {
-		if (!xprt_info->dynamic_ws) {
+	if (!xprt_info->dynamic_ws) {
+		__pm_stay_awake(&xprt_info->ws);
+		pkt->ws_need = true;
+	} else {
+	if (is_wakeup_source_allowed) {
 			__pm_stay_awake(&xprt_info->ws);
 			pkt->ws_need = true;
-		} else {
-			if (is_wakeup_source_allowed) {
-				__pm_stay_awake(&xprt_info->ws);
-				pkt->ws_need = true;
-			}
 		}
 	}
 	mutex_unlock(&xprt_info->rx_lock_lhb2);
-	if (rport_ptr)
-		kref_put(&rport_ptr->ref, ipc_router_release_rport);
+	//+bug657894, linyaosen.wt, rm, 20210527, to delte constant dead code
+	//if (rport_ptr)
+		//kref_put(&rport_ptr->ref, ipc_router_release_rport);
+	//-bug657894, linyaosen.wt, rm, 20210527, to delte constant dead code
 	kthread_queue_work(&xprt_info->kworker, &xprt_info->read_data);
 }
 
